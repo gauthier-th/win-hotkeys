@@ -11,8 +11,11 @@
 #include <fstream>
 #include <tuple>
 #include <tchar.h>
+#include <shellapi.h>
+#include <strsafe.h>
 
 #define MAX_LOADSTRING 100
+#define APPWM_ICONNOTIFY (WM_APP + 1)
 
 // Global Variables:
 HINSTANCE hInst; // current instance
@@ -20,11 +23,12 @@ WCHAR szTitle[MAX_LOADSTRING]; // The title bar text
 WCHAR szWindowClass[MAX_LOADSTRING]; // the main window class name
 
 // Forward declarations of functions included in this code module:
-ATOM                MyRegisterClass(HINSTANCE hInstance);
-LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
+ATOM MyRegisterClass(HINSTANCE hInstance);
+BOOL InitInstance(HINSTANCE, int);
+LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 
-VOID startup(LPCTSTR lpApplicationName);
+VOID startApp(LPCTSTR lpApplicationName);
 
 class HotKeysConfig
 {
@@ -53,6 +57,8 @@ std::wstring s2ws(const std::string& s)
 }
 
 HotKeysConfig config = HotKeysConfig();
+HICON hIcon = static_cast<HICON>(LoadImage(NULL, TEXT("small.ico"), IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR | LR_SHARED | LR_DEFAULTSIZE | LR_LOADFROMFILE));
+NOTIFYICONDATA nid = {};
 
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPWSTR lpCmdLine, _In_ int nCmdShow)
@@ -64,6 +70,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_WINHOTKEYS, szWindowClass, MAX_LOADSTRING);
     MyRegisterClass(hInstance);
+
+    // Perform application initialization:
+    if (!InitInstance(hInstance, nCmdShow))
+    {
+        return FALSE;
+    }
 
     HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_WINHOTKEYS));
 
@@ -93,7 +105,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
         {
             int id = (int) msg.wParam - 1;
             std::string program = std::get<2>(config.get(id));
-            startup(s2ws(program).c_str());
+            startApp(s2ws(program).c_str());
         }
     }
 
@@ -108,6 +120,7 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     wcex.cbSize = sizeof(WNDCLASSEX);
 
     wcex.style          = CS_HREDRAW | CS_VREDRAW;
+    wcex.lpfnWndProc    = WndProc;
     wcex.cbClsExtra     = 0;
     wcex.cbWndExtra     = 0;
     wcex.hInstance      = hInstance;
@@ -119,6 +132,89 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     wcex.hIconSm        = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
 
     return RegisterClassExW(&wcex);
+}
+
+BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
+{
+    hInst = hInstance; // Store instance handle in our global variable
+
+    HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
+
+    if (!hWnd)
+    {
+        return FALSE;
+    }
+
+    SendMessage(hWnd, WM_SETICON, ICON_SMALL, (LPARAM) hIcon);
+    //Notification
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = hWnd;
+    nid.uID = 1;
+    nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
+    nid.uCallbackMessage = APPWM_ICONNOTIFY;
+    nid.hIcon = hIcon;
+    // This text will be shown as the icon's tooltip.
+    StringCchCopy(nid.szTip, ARRAYSIZE(nid.szTip), L"Win Hotkeys");
+    // Show the notification.
+    Shell_NotifyIcon(NIM_ADD, &nid);
+
+    return TRUE;
+}
+
+
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_COMMAND:
+    {
+        int wmId = LOWORD(wParam);
+        // Parse the menu selections:
+        switch (wmId)
+        {
+        case IDM_EXIT:
+            DestroyWindow(hWnd);
+            break;
+        default:
+            return DefWindowProc(hWnd, message, wParam, lParam);
+        }
+    }
+    break;
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+        // TODO: Add any drawing code that uses hdc here...
+        EndPaint(hWnd, &ps);
+    }
+    break;
+    case WM_DESTROY:
+        // Hide the notification.
+        nid.hWnd = hWnd;
+        Shell_NotifyIcon(NIM_DELETE, &nid);
+        PostQuitMessage(0);
+        break;
+    case APPWM_ICONNOTIFY:
+    {
+        if (lParam == WM_RBUTTONUP)
+        {
+            POINT lpClickPoint;
+            HMENU hPopMenu;
+
+            UINT uFlag = MF_BYPOSITION | MF_UNCHECKED | MF_STRING;
+            GetCursorPos(&lpClickPoint);
+            hPopMenu = CreatePopupMenu();
+            InsertMenu(hPopMenu, 0, MF_BYPOSITION | MF_STRING, IDM_EXIT, L"Exit");
+            SetForegroundWindow(hWnd);
+            TrackPopupMenu(hPopMenu, TPM_LEFTALIGN | TPM_LEFTBUTTON | TPM_BOTTOMALIGN, lpClickPoint.x, lpClickPoint.y, 0, hWnd, NULL);
+        }
+        return 0;
+    }
+    break;
+    default:
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+    return 0;
 }
 
 
@@ -184,7 +280,7 @@ std::tuple<int, int, std::string> HotKeysConfig::get(size_t index) {
     return std::make_tuple<>(this->modifiersList[index], this->vkList[index], this->programList[index]);
 }
 
-VOID startup(LPCTSTR lpApplicationName)
+VOID startApp(LPCTSTR lpApplicationName)
 {
     // additional information
     STARTUPINFO si;
